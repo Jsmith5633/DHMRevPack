@@ -246,25 +246,48 @@ def extract_ops_14day(xl, report_date):
     return rows, TOTAL
 
 def extract_monthly_daily(xl, info):
-    """Extract daily OCC data for current month + 2 forward."""
+    """Extract daily OCC for current month + 2 forward.
+    OTB OCC from 90 Day Segments col4.
+    STLY OCC derived from 365 Day Outlook col31 (STLY RMS) / total_rooms.
+    """
+    import pandas as pd
+    TOTAL = 150
+
+    # Get STLY RMS from 365 Day Outlook to derive STLY OCC
+    df_365 = pd.read_excel(xl, sheet_name='365 Day Outlook', header=None)
+    stly_occ_map = {}
+    for idx in range(6, df_365.shape[0]):
+        row = df_365.iloc[idx]
+        dv = str(row[1])
+        if '2026' not in dv and '2027' not in dv: continue
+        try:
+            parts = dv.split(',')[0].split('/')
+            mo, day = int(parts[0]), int(parts[1])
+            stly_rms = float(row[31]) if str(row[31]) not in ('nan','') else 0
+            stly_occ_map[f"{mo}/{day}"] = round(stly_rms/TOTAL*100, 1)
+        except: pass
+
+    # Get OTB OCC from 90 Day Segments
     df_90 = pd.read_excel(xl, sheet_name='90 Day Segments', header=None)
     months_data = {}
     for idx in range(6, df_90.shape[0]):
         row = df_90.iloc[idx]
-        date_val = str(row[1])
-        if '2026' not in date_val and '2027' not in date_val: continue
+        dv = str(row[1])
+        if '2026' not in dv and '2027' not in dv: continue
         try:
-            parts = date_val.split(',')[0].split('/')
-            mo,day,yr = int(parts[0]),int(parts[1]),int(parts[2])
-            occ      = float(row[4]) if str(row[4]) not in ('nan','') else 0
-            stly_occ = float(row[13]) if str(row[13]) not in ('nan','') else 0
+            parts = dv.split(',')[0].split('/')
+            mo, day = int(parts[0]), int(parts[1])
+            occ = float(row[4]) if str(row[4]) not in ('nan','') else 0
+            key = f"{mo}/{day}"
+            stly_occ = stly_occ_map.get(key, 0)
             if str(mo) not in months_data: months_data[str(mo)] = []
             months_data[str(mo)].append({
-                'label':   f"{mo}/{day}",
-                'occ_otb': round(occ*100, 1),
-                'occ_stly':round(stly_occ*100, 1),
+                'label':    key,
+                'occ_otb':  round(occ*100, 1),
+                'occ_stly': stly_occ,
             })
         except: pass
+
     return {'report_mo': info['report_mo'], 'report_yr': info['report_yr'],
             'months': months_data}
 

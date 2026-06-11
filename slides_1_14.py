@@ -115,7 +115,7 @@ def build_slide_title(prs, info, str_data):
          8.5, 0.65, 4.5, 0.35, size=10, color=C['midGray'], align='right')
 
     # 5 KPI tiles
-    w = info['weekly']
+    w = str_data['weekly']
     kpis = [
         ("My OCC",   f"{float(w['my_occ'][7]['val']):.1f}%",
          f"CS {float(w['cs_occ'][7]['val']):.1f}%", C['teal']),
@@ -610,22 +610,26 @@ def build_slide_monthly_occ(prs, info, mo_num, daily_data):
     otb_vals = [d['occ_otb'] for d in daily_data]
     stly_vals= [d['occ_stly'] for d in daily_data]
 
-    from pptx.chart.data import ChartData
-    from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION
-    cd = ChartData()
-    cd.categories = labels
-    cd.add_series(f"OTB {info['report_yr']} OCC%",  tuple(otb_vals))
-    cd.add_series(f"STLY {info['report_yr']-1} OCC%", tuple(stly_vals))
-    chart = slide.shapes.add_chart(
-        XL_CHART_TYPE.LINE,
-        Inches(0.3), Inches(0.7), Inches(12.9), Inches(3.6), cd
-    ).chart
-    chart.has_legend = True
-    chart.legend.position = XL_LEGEND_POSITION.BOTTOM
-    chart.series[0].format.line.color.rgb = C['teal']
-    chart.series[0].format.line.width = 18000
-    chart.series[1].format.line.color.rgb = C['gold']
-    chart.series[1].format.line.width = 18000
+    if labels:
+        from pptx.chart.data import ChartData
+        from pptx.enum.chart import XL_CHART_TYPE, XL_LEGEND_POSITION
+        cd = ChartData()
+        cd.categories = labels
+        cd.add_series(f"OTB {info['report_yr']} OCC%",  tuple(otb_vals))
+        cd.add_series(f"STLY {info['report_yr']-1} OCC%", tuple(stly_vals))
+        chart = slide.shapes.add_chart(
+            XL_CHART_TYPE.LINE,
+            Inches(0.3), Inches(0.7), Inches(12.9), Inches(3.6), cd
+        ).chart
+        chart.has_legend = True
+        chart.legend.position = XL_LEGEND_POSITION.BOTTOM
+        chart.series[0].format.line.color.rgb = C['teal']
+        chart.series[0].format.line.width = 18000
+        chart.series[1].format.line.color.rgb = C['gold']
+        chart.series[1].format.line.width = 18000
+    else:
+        _txt(slide, "No daily data available for this month.",
+             0.3, 2.0, 12.7, 1.0, size=12, color=C['midGray'], align='center')
 
     # KPI tiles
     mo_kpi = info.get('mo_kpis', {}).get(mo_num, {})

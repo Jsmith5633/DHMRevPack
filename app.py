@@ -829,7 +829,11 @@ def main():
     col_logo, col_title = st.columns([1, 3])
     with col_logo:
         try:
+            st.markdown("""
+            <div style='background:white; padding:8px; border-radius:6px; display:inline-block;'>
+            """, unsafe_allow_html=True)
             st.image("driftwood_logo.png", width=160)
+            st.markdown("</div>", unsafe_allow_html=True)
         except:
             pass
     with col_title:

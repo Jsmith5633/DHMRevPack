@@ -833,9 +833,7 @@ def main():
             with open("driftwood_logo.png", "rb") as f:
                 logo_b64 = base64.b64encode(f.read()).decode()
             st.markdown(f"""
-            <div style='background:white; padding:8px 12px; border-radius:6px; display:inline-block;'>
-                <img src='data:image/png;base64,{logo_b64}' width='150'/>
-            </div>
+            <img src='data:image/png;base64,{logo_b64}' style='width:100%; max-width:160px; padding-top:8px;'/>
             """, unsafe_allow_html=True)
         except:
             pass

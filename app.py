@@ -850,6 +850,15 @@ def main():
     st.markdown("Upload your weekly rev pak Excel file to generate the revenue strategy presentation.")
     st.markdown("---")
 
+    with st.expander("📋 How to prepare your rev pak file"):
+        st.markdown("""
+        1. Open **Lighthouse** and open the **RevPAK**
+        2. In the RevPAK dropdown menu open **Annual Summary**
+        3. Change all forecast types to **Finance** and all transient/group comparisons to **STLY**
+        4. Export via **email**
+        5. Once the email extract is received, upload here and generate file
+        """)
+
     uploaded = st.file_uploader(
         "Choose your rev pak file",
         type=['xlsx','xls'],

@@ -245,6 +245,29 @@ def extract_ops_14day(xl, report_date):
         })
     return rows, TOTAL
 
+def extract_monthly_daily(xl, info):
+    """Extract daily OCC data for current month + 2 forward."""
+    df_90 = pd.read_excel(xl, sheet_name='90 Day Segments', header=None)
+    months_data = {}
+    for idx in range(6, df_90.shape[0]):
+        row = df_90.iloc[idx]
+        date_val = str(row[1])
+        if '2026' not in date_val and '2027' not in date_val: continue
+        try:
+            parts = date_val.split(',')[0].split('/')
+            mo,day,yr = int(parts[0]),int(parts[1]),int(parts[2])
+            occ      = float(row[4]) if str(row[4]) not in ('nan','') else 0
+            stly_occ = float(row[13]) if str(row[13]) not in ('nan','') else 0
+            if str(mo) not in months_data: months_data[str(mo)] = []
+            months_data[str(mo)].append({
+                'label':   f"{mo}/{day}",
+                'occ_otb': round(occ*100, 1),
+                'occ_stly':round(stly_occ*100, 1),
+            })
+        except: pass
+    return {'report_mo': info['report_mo'], 'report_yr': info['report_yr'],
+            'months': months_data}
+
 def extract_str_data(xl):
     df = pd.read_excel(xl, sheet_name='STR Analysis', header=None)
     dow_cols = [(3,4),(6,7),(9,10),(12,13),(15,16),(18,19),(21,22),(24,25)]
@@ -769,7 +792,6 @@ def build_ops_slide(prs, rows14, total_rooms):
 def build_presentation(file_bytes, progress_cb=None):
     """
     Main entry point. Takes raw Excel bytes, returns PPTX bytes.
-    progress_cb(pct, message) called during build for progress bar.
     """
     def prog(pct, msg):
         if progress_cb: progress_cb(pct, msg)
@@ -787,32 +809,21 @@ def build_presentation(file_bytes, progress_cb=None):
     prog(0.20, "Extracting 14-day ops forecast...")
     rows_14, total_rooms = extract_ops_14day(xl, info['report_date'])
 
-    prog(0.25, "Loading base presentation template...")
-    # Load the pre-built PPTX (slides 1-14) from embedded bytes if available,
-    # otherwise build from scratch using the template approach.
-    # For Streamlit deployment we build everything fresh from python-pptx.
-    # The full slide build is handled below.
+    prog(0.25, "Extracting monthly daily data...")
+    monthly_data = extract_monthly_daily(xl, info)
 
     prog(0.30, "Building presentation...")
     prs = new_prs()
 
-    # ── Slides 1-6 and 8-14 are complex and require the original template ──
-    # For the Streamlit version we output the 14-day ops + 365-day slides
-    # which are the ones built entirely in Python. The rest of the slides
-    # are carried from the template PPTX which the RM uploads alongside
-    # their rev pak -- OR we build a simplified version here.
-    #
-    # DEPLOYMENT NOTE: The simplest approach for your setup is to keep
-    # the existing PPTX generation pipeline and have Streamlit call it.
-    # Since Streamlit Cloud doesn't have Node.js, we handle the two
-    # pure-Python components here (ops forecast + 365-day) and for the
-    # remaining slides we use the template-patch approach below.
+    prog(0.35, "Building slides 1-14...")
+    from slides_1_14 import build_slides_1_to_14
+    build_slides_1_to_14(prs, xl, info, str_data, monthly_data, rows_14, total_rooms)
 
-    prog(0.40, "Building 14-day operational forecast...")
+    prog(0.55, "Building 14-day operational forecast...")
     if rows_14:
         build_ops_slide(prs, rows_14, total_rooms)
 
-    prog(0.60, "Building 365-day outlook slides...")
+    prog(0.70, "Building 365-day outlook slides...")
     build_365_slides(prs, rows_365, comp_labels, info['report_date'])
 
     prog(0.90, "Saving presentation...")

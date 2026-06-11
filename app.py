@@ -829,11 +829,14 @@ def main():
     col_logo, col_title = st.columns([1, 3])
     with col_logo:
         try:
-            st.markdown("""
-            <div style='background:white; padding:8px; border-radius:6px; display:inline-block;'>
+            import base64
+            with open("driftwood_logo.png", "rb") as f:
+                logo_b64 = base64.b64encode(f.read()).decode()
+            st.markdown(f"""
+            <div style='background:white; padding:8px 12px; border-radius:6px; display:inline-block;'>
+                <img src='data:image/png;base64,{logo_b64}' width='150'/>
+            </div>
             """, unsafe_allow_html=True)
-            st.image("driftwood_logo.png", width=160)
-            st.markdown("</div>", unsafe_allow_html=True)
         except:
             pass
     with col_title:

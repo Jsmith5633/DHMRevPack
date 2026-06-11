@@ -19,7 +19,7 @@ from pptx.enum.text import PP_ALIGN
 
 # ─── Page config ─────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="Revenue Package Builder",
+    page_title="Revenue Strategy Packet Tool",
     page_icon="🏨",
     layout="centered",
 )
@@ -825,9 +825,24 @@ def build_presentation(file_bytes, progress_cb=None):
 
 # ─── Streamlit UI ────────────────────────────────────────────────────────────
 def main():
-    st.title("🏨 Revenue Package Builder")
-    st.markdown("Upload your weekly rev pak Excel file to generate the revenue strategy presentation.")
+    # Logo + title header
+    col_logo, col_title = st.columns([1, 3])
+    with col_logo:
+        try:
+            st.image("driftwood_logo.png", width=160)
+        except:
+            pass
+    with col_title:
+        st.markdown("""
+        <div style='padding-top:0.6rem'>
+            <h1 style='margin:0; color:#0D1B2A; font-size:1.6rem; font-family:Calibri,sans-serif;'>
+                Revenue Strategy Packet Tool
+            </h1>
+            <p style='margin:0; color:#0A7E8C; font-size:0.9rem;'>Driftwood Hospitality Management</p>
+        </div>
+        """, unsafe_allow_html=True)
 
+    st.markdown("Upload your weekly rev pak Excel file to generate the revenue strategy presentation.")
     st.markdown("---")
 
     uploaded = st.file_uploader(
@@ -935,7 +950,7 @@ def main():
 
     st.markdown("---")
     st.markdown(
-        "<small style='color:#8FA3B1'>Revenue Package Builder • "
+        "<small style='color:#8FA3B1'>Revenue Strategy Packet Tool • Driftwood Hospitality Management • "
         "Upload a new file at any time to regenerate.</small>",
         unsafe_allow_html=True
     )

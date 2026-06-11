@@ -134,11 +134,11 @@ def extract_365_data(xl, report_date, max_comps=4):
                     if len(comp_cols) >= max_comps: break
         except: pass
 
-    def fv(v, dollar=False):
+    def fv(v, dollar=False, dp=0):
         try:
             f = float(v)
             if f == 0: return ''
-            return f"${f:.0f}" if dollar else f"{f:.0f}"
+            return f"${f:.0f}" if dollar else f"{f:.{dp}f}"
         except: return ''
 
     rows = []
@@ -174,7 +174,7 @@ def extract_365_data(xl, report_date, max_comps=4):
             'dta':   str(dta),
             'event': event,
             'otb':   fv(row[5]),
-            'occ':   fv(row[6]).replace('$',''),
+            'occ':   fv(row[6], dp=4),
             'lts':   fv(row[4]),
             'adr':   fv(row[7]).replace('$',''),
             'hurdle':fv(row[9]).replace('$',''),

@@ -871,35 +871,64 @@ def extract_all_data(xl, info):
     info['pickup_from'] = pickup_from
 
     # ── Week segment extraction from STR Analysis ─────────────────────────
-    # Row 37 = segment name headers; row 46 = weekly total values
-    # Segments are identified by uppercase string values in row 37
-    # Each segment block has: [OTB RMS at +2], [STLY RMS at +3],
-    #                         [OTB ADR at +4], [STLY ADR at +5]
+    # Sheet row 37 (0-indexed: iloc[36]) = segment name headers
+    # Sheet row 46 (0-indexed: iloc[45]) = weekly total values
+    # NOTE: handover row numbers are 1-indexed; subtract 1 for iloc.
+    #
+    # Lighthouse STR Analysis segment block column patterns (relative to name col):
+    #   Pattern A: +2=CY RMS, +3=STLY RMS, +4=CY ADR, +5=STLY ADR  (no var col)
+    #   Pattern B: +2=CY RMS, +3=STLY RMS, +4=Var,    +5=CY ADR, +6=STLY ADR
+    # We try A first; if RMS values look wrong (ADR slot has a large int) try B.
     week_segs = []
     try:
-        seg_name_row   = df_str.iloc[37]
-        week_total_row = df_str.iloc[46]
+        seg_name_row   = df_str.iloc[36]   # sheet row 37 (1-indexed)
+        week_total_row = df_str.iloc[45]   # sheet row 46 (1-indexed)
 
         def _gsi(row, col, default=0):
-            try: return int(float(row[col]))
+            try:
+                v = row.iloc[col] if hasattr(row, 'iloc') else row[col]
+                return int(float(v)) if str(v) not in ('nan','') else default
             except: return default
 
         def _gsf(row, col, default=0.0):
-            try: return float(row[col])
+            try:
+                v = row.iloc[col] if hasattr(row, 'iloc') else row[col]
+                return float(v) if str(v) not in ('nan','') else default
             except: return default
 
-        # Find columns where row 37 has an uppercase segment name
-        seg_col_starts = []
-        for ci in range(2, df_str.shape[1]):
-            v = str(seg_name_row.iloc[ci])
-            if v not in ('nan', '') and v.strip().isupper() and len(v.strip()) > 1:
-                seg_col_starts.append((ci, v.strip()))
+        def _looks_like_adr(v):
+            """ADR is typically $100-$999; RMS is an integer 0-500."""
+            try:
+                f = float(v)
+                return 50.0 < f < 2000.0
+            except: return False
 
-        for col_start, seg_name in seg_col_starts[:10]:
-            otb_rms  = _gsi(week_total_row, col_start + 2)
-            stly_rms = _gsi(week_total_row, col_start + 3)
-            otb_adr  = _gsf(week_total_row, col_start + 4)
-            stly_adr = _gsf(week_total_row, col_start + 5)
+        # Find columns where seg_name_row has an uppercase segment name
+        seg_col_starts = []
+        for ci in range(2, len(seg_name_row)):
+            v = str(seg_name_row.iloc[ci]).strip()
+            if v not in ('nan', '') and v.replace('/','').replace(' ','').isupper() \
+               and len(v) > 1 and not v.isdigit():
+                seg_col_starts.append((ci, v))
+
+        for col_start, seg_name in seg_col_starts[:12]:
+            # Try Pattern A first: +2=CY RMS, +3=STLY RMS, +4=CY ADR, +5=STLY ADR
+            otb_rms_a  = _gsi(week_total_row, col_start + 2)
+            stly_rms_a = _gsi(week_total_row, col_start + 3)
+            otb_adr_a  = _gsf(week_total_row, col_start + 4)
+            stly_adr_a = _gsf(week_total_row, col_start + 5)
+
+            # Try Pattern B: +2=CY RMS, +3=STLY RMS, +5=CY ADR, +6=STLY ADR
+            otb_adr_b  = _gsf(week_total_row, col_start + 5)
+            stly_adr_b = _gsf(week_total_row, col_start + 6)
+
+            # Choose pattern: if pattern A ADR slot looks like a room count
+            # (integer, plausibly >500 or <50), prefer pattern B
+            use_b = (not _looks_like_adr(otb_adr_a) and _looks_like_adr(otb_adr_b))
+            otb_rms  = otb_rms_a
+            stly_rms = stly_rms_a
+            otb_adr  = otb_adr_b  if use_b else otb_adr_a
+            stly_adr = stly_adr_b if use_b else stly_adr_a
 
             # Skip segments with no data at all
             if otb_rms == 0 and stly_rms == 0:
@@ -920,6 +949,8 @@ def extract_all_data(xl, info):
         week_segs = []
 
     info['week_segments'] = week_segs
+    # Store count for debug surfacing in app.py expander
+    info['_seg_debug'] = f"Detected {len(week_segs)} segments: {[s['name'] for s in week_segs]}"
 
     # ── Pickup segment stubs (segment-level 7D PU not in export) ─────────
     seg_notes = {

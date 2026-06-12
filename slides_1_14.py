@@ -33,6 +33,21 @@ MO_FULL  = ['','January','February','March','April','May','June',
             'July','August','September','October','November','December']
 DAYS_MO  = [0,31,28,31,30,31,30,31,31,30,31,30,31]
 
+# ── Safe helpers ─────────────────────────────────────────────────────────────
+def _safe_float(v, default=0.0):
+    try:
+        f = float(v)
+        return default if str(v) in ('nan', '') else f
+    except:
+        return default
+
+def _safe_sign(val_str):
+    """Return '+' if val_str parses to positive float, else ''."""
+    try:
+        return "+" if float(val_str) > 0 else ""
+    except:
+        return ""
+
 # ── Primitive helpers ────────────────────────────────────────────────────────
 def _rect(slide, x, y, w, h, color):
     s = slide.shapes.add_shape(1, Inches(x), Inches(y), Inches(w), Inches(h))
@@ -140,9 +155,14 @@ def build_slide_title(prs, info, str_data):
          8.5, 0.65, 4.5, 0.35, size=10, color=C['midGray'], align='right')
 
     w = str_data['weekly']
+
     def fv(key, idx=7):
         try: return float(w[key][idx]['val'])
         except: return 0.0
+
+    def fchg(key, idx=7):
+        try: return w[key][idx]['chg']
+        except: return ''
 
     kpis = [
         ("My OCC",    f"{fv('my_occ'):.1f}%",
@@ -152,9 +172,9 @@ def build_slide_title(prs, info, str_data):
         ("My RevPAR", f"${fv('my_revpar'):.2f}",
          f"CS ${fv('cs_revpar'):.2f}",  C['gold']),
         ("MPI",       f"{fv('mpi'):.1f}",
-         f"YoY {w['mpi'][7]['chg']} pts",  C['slate']),
+         f"YoY {fchg('mpi')} pts",      C['slate']),
         ("RGI",       f"{fv('rgi'):.1f}",
-         f"YoY {w['rgi'][7]['chg']} pts",
+         f"YoY {fchg('rgi')} pts",
          C['green'] if fv('rgi') >= 100 else C['red']),
     ]
     for i,(lbl,val,sub,col) in enumerate(kpis):
@@ -264,7 +284,7 @@ def _build_str_slide(prs, info, str_data, period):
             _add_yoy(t.cell(ri+1,ci+1), d['chg'],
                      is_occ=is_occ, is_index=is_idx, is_total=is_total)
 
-    # Segment mix + 515 STR Analysis section
+    # ── Segment mix + 515 STR Analysis section ───────────────────────────
     SEC_Y = 3.98
     _rect(slide, 0.3, SEC_Y, 6.8, 0.32, C['navy'])
     _txt(slide, "MARKET SEGMENT MIX — WEEK  |  CY vs STLY",
@@ -277,69 +297,90 @@ def _build_str_slide(prs, info, str_data, period):
     _txt(slide, "515 STR ANALYSIS", 7.3, SEC_Y, 5.7, 0.32,
          size=10, bold=True, color=C['white'], align='center', valign='middle')
 
-    # Auto-generate commentary from data
-    rgi_val = w['rgi'][7]['val']; rgi_chg = w['rgi'][7]['chg']
-    mpi_val = w['mpi'][7]['val']; ari_val = w['ari'][7]['val']
-    my_adr_chg = w['my_adr'][7]['chg']; cs_adr_chg = w['cs_adr'][7]['chg']
+    # ── Auto-generate commentary — all float conversions protected ────────
+    rgi_val    = w['rgi'][7]['val']
+    rgi_chg    = w['rgi'][7]['chg']
+    mpi_val    = w['mpi'][7]['val']
+    ari_val    = w['ari'][7]['val']
+    my_adr_chg = w['my_adr'][7]['chg']
+    cs_adr_chg = w['cs_adr'][7]['chg']
     dr = info['date_range']
+
     if period == 'weekly':
         critique = (
             f"The week of {dr} delivered an RGI of {rgi_val} "
-            f"({'+' if float(rgi_chg)>0 else ''}{rgi_chg} pts YoY), "
+            f"({_safe_sign(rgi_chg)}{rgi_chg} pts YoY), "
             f"supported by an MPI of {mpi_val} and ARI of {ari_val}. "
             "The hotel outperformed the comp set on both occupancy and rate "
             "simultaneously for the week. Rate growth was driven by ADR "
-            f"improving {'+' if float(my_adr_chg)>0 else ''}{my_adr_chg}% "
+            f"improving {_safe_sign(my_adr_chg)}{my_adr_chg}% "
             f"vs STLY while the comp set grew "
-            f"{'+' if float(cs_adr_chg)>0 else ''}{cs_adr_chg}%, "
+            f"{_safe_sign(cs_adr_chg)}{cs_adr_chg}%, "
             "maintaining a rate premium. Monitor segment mix and group "
             "pace to protect midweek production."
         )
     else:
-        my_adr_28 = w['my_adr'][7]['val']; cs_adr_28 = w['cs_adr'][7]['val']
+        my_adr_28  = w['my_adr'][7]['val']
+        cs_adr_28  = w['cs_adr'][7]['val']
         mpi_28_chg = w['mpi'][7]['chg']
+        my_adr_28_f = _safe_float(my_adr_28)
+        cs_adr_28_f = _safe_float(cs_adr_28)
         critique = (
             f"The 28-day running period shows an RGI of {rgi_val} "
-            f"({'+' if float(rgi_chg)>0 else ''}{rgi_chg} pts YoY). "
-            f"MPI of {mpi_val} ({'+' if float(mpi_28_chg)>0 else ''}"
+            f"({_safe_sign(rgi_chg)}{rgi_chg} pts YoY). "
+            f"MPI of {mpi_val} ({_safe_sign(mpi_28_chg)}"
             f"{mpi_28_chg} pts) confirms sustained occupancy outperformance "
-            f"vs the comp set. ADR running at ${float(my_adr_28):.0f} vs "
-            f"comp set ${float(cs_adr_28):.0f} — ARI of {ari_val} reflects "
+            f"vs the comp set. ADR running at ${my_adr_28_f:.0f} vs "
+            f"comp set ${cs_adr_28_f:.0f} — ARI of {ari_val} reflects "
             "relative rate positioning."
         )
+
     _txt(slide, critique, 7.38, SEC_Y+0.4, 5.52, 2.9,
          size=10, color=C['darkGray'], wrap=True)
 
-    # Segment table
+    # ── Segment table ─────────────────────────────────────────────────────
     segs = info.get('week_segments', [])
-    tf2 = slide.shapes.add_table(len(segs)+1, 4, Inches(0.3),
+    tf2 = slide.shapes.add_table(max(len(segs)+1, 2), 4, Inches(0.3),
                                  Inches(SEC_Y+0.32), Inches(6.8),
                                  Inches(3.08))
     t2 = tf2.table
     for ci,cw2 in enumerate([2.3,1.4,1.55,1.55]):
         t2.columns[ci].width = int(cw2*914400)
-    for ri in range(len(segs)+1):
-        t2.rows[ri].height = int(0.28*914400) if ri==0 else int(0.27*914400)
+
+    n_rows = max(len(segs)+1, 2)
+    hdr_h  = int(0.28*914400)
+    data_h = int(0.27*914400) if len(segs) > 0 else int(0.40*914400)
+    t2.rows[0].height = hdr_h
+    for ri in range(1, n_rows):
+        t2.rows[ri].height = data_h
+
     for ci,h in enumerate(["Segment","RMS Var","ADR Var","Rev Var"]):
         _cell(t2.cell(0,ci), h, bg=C['teal'], fg=C['white'],
               bold=True, size=9.5)
-    for ri,seg in enumerate(segs):
-        bg = _rgb("F4F6F8") if ri%2==0 else C['white']
-        rms_c = C['green'] if seg['rms_var']>0 else \
-                C['red'] if seg['rms_var']<0 else C['midGray']
-        adr_c = C['green'] if seg['adr_var']>0 else \
-                C['orange'] if seg['adr_var']<0 else C['midGray']
-        rev_c = C['green'] if seg['rev_var']>0 else \
-                C['red'] if seg['rev_var']<0 else C['midGray']
-        rms_s = f"{seg['rms_var']:+d}" if seg['rms_var']!=0 else "0"
-        adr_s = f"{'+' if seg['adr_var']>0 else ''}${seg['adr_var']:.0f}" \
-                if seg['adr_var']!=0 else "$0"
-        rev_s = f"{'+' if seg['rev_var']>0 else ''}${abs(seg['rev_var'])/1000:.1f}K" \
-                if seg['rev_var']!=0 else "—"
-        _cell(t2.cell(ri+1,0), seg['name'],   bg=bg, fg=C['darkGray'], bold=True, size=9.5)
-        _cell(t2.cell(ri+1,1), rms_s,         bg=bg, fg=rms_c, size=9.5)
-        _cell(t2.cell(ri+1,2), adr_s,         bg=bg, fg=adr_c, size=9.5)
-        _cell(t2.cell(ri+1,3), rev_s,         bg=bg, fg=rev_c, size=9.5)
+
+    if not segs:
+        _cell(t2.cell(1,0), "Segment data not available in this export",
+              bg=_rgb("F4F6F8"), fg=C['midGray'], size=9)
+        for ci in range(1, 4):
+            _cell(t2.cell(1,ci), "—", bg=_rgb("F4F6F8"), fg=C['midGray'], size=9)
+    else:
+        for ri,seg in enumerate(segs):
+            bg = _rgb("F4F6F8") if ri%2==0 else C['white']
+            rms_c = C['green'] if seg['rms_var']>0 else \
+                    C['red'] if seg['rms_var']<0 else C['midGray']
+            adr_c = C['green'] if seg['adr_var']>0 else \
+                    C['orange'] if seg['adr_var']<0 else C['midGray']
+            rev_c = C['green'] if seg['rev_var']>0 else \
+                    C['red'] if seg['rev_var']<0 else C['midGray']
+            rms_s = f"{seg['rms_var']:+d}" if seg['rms_var']!=0 else "0"
+            adr_s = f"{'+' if seg['adr_var']>0 else ''}${seg['adr_var']:.0f}" \
+                    if seg['adr_var']!=0 else "$0"
+            rev_s = f"{'+' if seg['rev_var']>0 else ''}${abs(seg['rev_var'])/1000:.1f}K" \
+                    if seg['rev_var']!=0 else "—"
+            _cell(t2.cell(ri+1,0), seg['name'],   bg=bg, fg=C['darkGray'], bold=True, size=9.5)
+            _cell(t2.cell(ri+1,1), rms_s,         bg=bg, fg=rms_c, size=9.5)
+            _cell(t2.cell(ri+1,2), adr_s,         bg=bg, fg=adr_c, size=9.5)
+            _cell(t2.cell(ri+1,3), rev_s,         bg=bg, fg=rev_c, size=9.5)
 
     return slide
 
@@ -683,8 +724,7 @@ def extract_all_data(xl, info):
         try: return float(v) if str(v) not in ('nan','') else default
         except: return default
 
-    # ── Monthly total rows in 90 Day Segments (no date in col1) ──────────
-    # These rows have blank col1 and contain monthly aggregates
+    # ── Monthly total rows in 90 Day Segments ────────────────────────────
     mo_total_rows = {}
     mo_order = [info['report_mo'], info['report_mo']+1, info['report_mo']+2]
     mo_idx = 0
@@ -693,7 +733,6 @@ def extract_all_data(xl, info):
         if str(row[1]) == 'nan' and str(row[2]) not in ('nan','') \
            and str(row[3]) not in ('nan',''):
             try:
-                # Verify it's a total row: col4 should be OCC (0-1), col12 should be big int
                 occ_val = float(row[4])
                 trn_val = float(row[12]) if str(row[12]) not in ('nan','') else 0
                 if 0 < occ_val < 1 and trn_val > 0 and mo_idx < len(mo_order):
@@ -736,7 +775,6 @@ def extract_all_data(xl, info):
         bud_adr  = fv(row[20]) if fv(row[20]) > 0 else 0
         bud_rev  = fv(row[21]) if fv(row[21]) > 0 else 0
 
-        # Get transient from monthly total rows
         mo_tot   = mo_total_rows.get(mo_num, {})
         trn_otb  = mo_tot.get('trn_otb',  0)
         trn_stly = mo_tot.get('trn_stly', 0)
@@ -791,7 +829,6 @@ def extract_all_data(xl, info):
     mo_kpis = {}
     for d in pace_data:
         mo = d['mo_num']
-        cap = DAYS_MO[mo] * 150 if mo > 0 else 4500
         mo_tot = mo_total_rows.get(mo, {})
         vs_rms = d['otb_rms'] - d['stly_rms']
         stly_rev = d['stly_rms'] * d['stly_adr']
@@ -815,7 +852,6 @@ def extract_all_data(xl, info):
         mo_row  = df_pu.iloc[39]
         rms_row = df_pu.iloc[40]
         adr_row = df_pu.iloc[41]
-        rev_row = df_pu.iloc[42]
         raw_months = [str(v) for v in mo_row if str(v) not in ('nan','Total','')]
         raw_rms    = [v for v in rms_row if str(v) not in ('nan','RMS','')]
         raw_adr    = [v for v in adr_row if str(v) not in ('nan','ADR','')]
@@ -825,7 +861,6 @@ def extract_all_data(xl, info):
             if rms_n == 0 and adr_n == 0: continue
             short = mo_s.split('-')[0]
             pu_months.append(short); pu_rms.append(rms_n); pu_adr.append(round(adr_n))
-        # pickup from date
         for i in range(4, 6):
             r = df_pu.iloc[i]
             for v in r:
@@ -835,11 +870,58 @@ def extract_all_data(xl, info):
 
     info['pickup_from'] = pickup_from
 
-    # Total transient pickup for % of trans calculation
-    total_trn_pu = pu_rms[0] if pu_rms else 0
+    # ── Week segment extraction from STR Analysis ─────────────────────────
+    # Row 37 = segment name headers; row 46 = weekly total values
+    # Segments are identified by uppercase string values in row 37
+    # Each segment block has: [OTB RMS at +2], [STLY RMS at +3],
+    #                         [OTB ADR at +4], [STLY ADR at +5]
+    week_segs = []
+    try:
+        seg_name_row   = df_str.iloc[37]
+        week_total_row = df_str.iloc[46]
 
-    # Segment pickup data (from 90 Day Segments 7-day pickup col9)
-    # Build from actual data available
+        def _gsi(row, col, default=0):
+            try: return int(float(row[col]))
+            except: return default
+
+        def _gsf(row, col, default=0.0):
+            try: return float(row[col])
+            except: return default
+
+        # Find columns where row 37 has an uppercase segment name
+        seg_col_starts = []
+        for ci in range(2, df_str.shape[1]):
+            v = str(seg_name_row.iloc[ci])
+            if v not in ('nan', '') and v.strip().isupper() and len(v.strip()) > 1:
+                seg_col_starts.append((ci, v.strip()))
+
+        for col_start, seg_name in seg_col_starts[:10]:
+            otb_rms  = _gsi(week_total_row, col_start + 2)
+            stly_rms = _gsi(week_total_row, col_start + 3)
+            otb_adr  = _gsf(week_total_row, col_start + 4)
+            stly_adr = _gsf(week_total_row, col_start + 5)
+
+            # Skip segments with no data at all
+            if otb_rms == 0 and stly_rms == 0:
+                continue
+
+            otb_rev  = otb_rms  * otb_adr
+            stly_rev = stly_rms * stly_adr
+
+            week_segs.append({
+                'name':    seg_name.title(),
+                'rms_var': otb_rms  - stly_rms,
+                'adr_var': otb_adr  - stly_adr,
+                'rev_var': otb_rev  - stly_rev,
+            })
+
+    except Exception:
+        # Fail silently — blank table is better than a crash
+        week_segs = []
+
+    info['week_segments'] = week_segs
+
+    # ── Pickup segment stubs (segment-level 7D PU not in export) ─────────
     seg_notes = {
         'Transient (Total)': ('ADR change vs LY', True),
         'Retail / Rack':     ('Strong rate integrity', False),
@@ -848,21 +930,6 @@ def extract_all_data(xl, info):
         'Packages':          ('Continue to promote', False),
         'Group':             ('Solid group contribution', False),
     }
-    # Get 7D pickup totals from 90 Day Segments total row
-    try:
-        total_row_90 = None
-        for i in range(6, df_90.shape[0]):
-            row = df_90.iloc[i]
-            if str(row[1]) == 'nan' and str(row[2]) not in ('nan','') \
-               and fv(row[3]) > 1000:  # first monthly total
-                total_row_90 = row; break
-
-        # Get actual pickup breakdown from 90 Day Segments
-        # Use total 7D pickup from the first monthly total row
-        total_7d_pu = int(fv(total_row_90[9])) if total_row_90 is not None else 0
-        total_trn_pu = max(total_trn_pu, total_7d_pu)
-    except: pass
-
     pu_segs = []
     for name,(note,is_total) in seg_notes.items():
         pu_segs.append({
@@ -870,35 +937,6 @@ def extract_all_data(xl, info):
             'note': note, 'is_total': is_total,
             'pct_trans': '100.0%' if is_total else '',
         })
-
-    # Try to populate segment pickup from STR Analysis week segment rows
-    try:
-        seg_names = ['RACK','INTERNET','CONTRACT','PACKAGES','GROUP',
-                     'CORPORATE','GOVERNMENT','DISCOUNT','WHOLESALE','FRANCHISE']
-        # Week total row is row 46 in STR Analysis
-        week_total = df_str.iloc[46]
-        # Row 37 has segment names, rows 39-45 have daily, row 46 = weekly total
-        # col2=PU rms, col3=LTS, col4=OTB, col5=ADR, col6=Rev
-        # Segment order from row 37: RACK, INTERNET, CONTRACT, PACKAGES, GROUP...
-        # Each segment has its own col block - skip for now, use what's available
-        pass
-    except: pass
-
-    # Build week segments for STR slides from STR Analysis rows 39-46
-    week_segs = []
-    try:
-        seg_name_row = df_str.iloc[37]
-        seg_names_list = [str(v) for v in seg_name_row if str(v)!='nan']
-        week_total_row = df_str.iloc[46]
-        wt_vals = [v for v in week_total_row if str(v)!='nan']
-        # The total row has format: [OOO/avail, LTS, OTB, OCC, ADR, Rev, RevPAR, REV, ...]
-        # Col 10=total OTB, col 11=STLY
-        # For segment breakdown we need to look at daily rows and sum
-        # Use simplified approach: extract from available week data
-        pass
-    except: pass
-
-    info['week_segments'] = week_segs
 
     pickup_data = {
         'months': pu_months, 'rms': pu_rms, 'adr': pu_adr,
@@ -911,22 +949,21 @@ def extract_all_data(xl, info):
 def build_slides_1_to_14(prs, xl, info, str_data, monthly_data, ops_rows, total_rooms):
     pace_data, pickup_data = extract_all_data(xl, info)
 
-    build_slide_title(prs, info, str_data)          # Slide 1
-    build_slide_str_weekly(prs, info, str_data)     # Slide 2
-    build_slide_str_28day(prs, info, str_data)      # Slide 3
-    build_slide_annual_pace(prs, info, pace_data)   # Slide 4
-    build_slide_transient_pace(prs, info, pace_data)# Slide 5
-    build_slide_pickup(prs, info, pickup_data)      # Slide 6
+    build_slide_title(prs, info, str_data)           # Slide 1
+    build_slide_str_weekly(prs, info, str_data)      # Slide 2
+    build_slide_str_28day(prs, info, str_data)       # Slide 3
+    build_slide_annual_pace(prs, info, pace_data)    # Slide 4
+    build_slide_transient_pace(prs, info, pace_data) # Slide 5
+    build_slide_pickup(prs, info, pickup_data)       # Slide 6
 
     # Slides 7-12: Monthly outlook (current + 2 months)
     for offset in range(3):
         mo = info['report_mo'] + offset
         if mo > 12: break
         daily = monthly_data.get('months', {}).get(str(mo), [])
-        build_slide_monthly_occ(prs, info, mo, daily)      # 7, 9, 11
+        build_slide_monthly_occ(prs, info, mo, daily)   # 7, 9, 11
         seg_mix = {'pie':{},'rows':[],'takeaways':[]}
-        build_slide_segment_mix(prs, info, mo, seg_mix)    # 8, 10, 12
+        build_slide_segment_mix(prs, info, mo, seg_mix) # 8, 10, 12
 
-    build_slide_full_year(prs, info, pace_data)     # Slide 13
+    build_slide_full_year(prs, info, pace_data)      # Slide 13
     # Slide 14 = 14-Day Ops built by main app
-

@@ -425,6 +425,10 @@ def extract_all_data(file_bytes):
         })
 
     # ── BI Forecast + Budget — rows 38-49 (0-indexed) ───────────────────────
+    # Header row 38 (0-idx): col2=Month
+    #   OTB:    col3=OCC, col4=RMS, col5=ADR, col6=REV
+    #   BI Fcst:col7=OCC, col8=RMS, col9=ADR, col10=REV
+    #   Budget: col12=OCC, col13=RMS, col14=ADR, col15=REV
     fcst_map = {}
     for i in range(38, 50):
         row = df_as.iloc[i]
@@ -436,9 +440,9 @@ def extract_all_data(file_bytes):
             'bi_rms':  _iv(row[7]),
             'bi_adr':  _fv(row[8]),
             'bi_rev':  _fv(row[9]),
-            'bud_rms': _iv(row[21]),
-            'bud_adr': _fv(row[22]),
-            'bud_rev': _fv(row[23]),
+            'bud_rms': _iv(row[12]),
+            'bud_adr': _fv(row[13]),
+            'bud_rev': _fv(row[14]),
         }
     for d in pace_data:
         f = fcst_map.get(d['mo_num'], {})
@@ -498,7 +502,8 @@ def extract_all_data(file_bytes):
             except: continue
         mo_daily[mo_num] = days
 
-    # Overlay STLY OCC from 365 Day Outlook col 31 (STLY RMS / total_rooms)
+    # Overlay STLY OCC from 365 Day Outlook col 32 (idx 31) = STLY RMS / total_rooms
+    # CRITICAL: use full date (m/d/yyyy) as key — same m/d in 2026 vs 2027 must not collide
     stly_map = {}
     for i in range(6, df_365.shape[0]):
         row = df_365.iloc[i]
@@ -506,13 +511,19 @@ def extract_all_data(file_bytes):
         if '2026' not in dv and '2027' not in dv: continue
         try:
             pp = dv.split(',')[0].split('/')
-            m2, d2 = int(pp[0]), int(pp[1])
+            m2, d2, yr2 = int(pp[0]), int(pp[1]), int(pp[2])
             stly_rms = _fv(row[31])
-            stly_map[f"{m2}/{d2}"] = round(stly_rms / total_rooms * 100, 1)
+            stly_map[(yr2, m2, d2)] = round(stly_rms / total_rooms * 100, 1)
         except: continue
-    for days in mo_daily.values():
+    # Apply to mo_daily — need to know which year each day belongs to
+    # Each block in mo_daily corresponds to report_yr (forward months only)
+    for mo_num, days in mo_daily.items():
         for d in days:
-            d['occ_stly'] = stly_map.get(d['label'], 0)
+            try:
+                m2, d2 = d['label'].split('/')
+                key = (report_yr, int(m2), int(d2))
+                d['occ_stly'] = stly_map.get(key, 0)
+            except: d['occ_stly'] = 0
 
     # ── Pickup totals ─────────────────────────────────────────────────────────
     # Row 39 (0-idx): month labels at cols 2,4,6...
@@ -592,7 +603,10 @@ def extract_all_data(file_bytes):
         pu1d = _iv(row[7]); pu7d = _iv(row[9])
         trn  = _iv(row[12]); grp = _iv(row[19]); ctr = _iv(row[25])
         w1, w7 = WEIGHTS.get(delta, (0,0))
-        pu_fcst    = round(pu1d*w1 + pu7d*w7)
+        pu_raw = round(pu1d*w1 + pu7d*w7)
+        # CRITICAL: pickup cannot exceed remaining capacity (total_rooms - otb)
+        remaining = max(total_rooms - otb, 0)
+        pu_fcst    = min(pu_raw, remaining)
         fcst_total = min(otb + pu_fcst, total_rooms)
         fcst_trn   = max(min(trn + pu_fcst, total_rooms - grp - ctr), trn)
 
@@ -911,9 +925,10 @@ def _build_slide_annual_pace(prs, data):
     cd.add_series(f"STLY {info['report_yr']-1}", tuple(stly_rms))
     cd.add_series("Budget",                      tuple(bud_rms))
     chart = slide.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED,
-        Inches(0.25), Inches(0.65), Inches(13.0), Inches(3.8), cd).chart
+        Inches(0.25), Inches(0.65), Inches(13.0), Inches(3.3), cd).chart
     chart.has_legend = True
     chart.legend.position = XL_LEGEND_POSITION.BOTTOM
+    chart.legend.include_in_layout = False
     chart.series[0].format.fill.solid(); chart.series[0].format.fill.fore_color.rgb = C['teal']
     chart.series[1].format.fill.solid(); chart.series[1].format.fill.fore_color.rgb = C['lightGray']
     chart.series[2].format.fill.solid(); chart.series[2].format.fill.fore_color.rgb = C['gold']
@@ -923,7 +938,7 @@ def _build_slide_annual_pace(prs, data):
                 "RMS Var","ADR Var","REV Var","Bud REV","vs Bud"]
     cws = [0.7,0.9,0.9,0.9,0.9,0.9,0.9,0.7,0.7,0.9,0.9,0.7]
     tf = slide.shapes.add_table(len(upcoming)+1, len(headers),
-         Inches(0.25), Inches(4.6), Inches(12.83), Inches(2.8))
+         Inches(0.25), Inches(4.30), Inches(12.83), Inches(2.9))
     t = tf.table
     for ci, cw in enumerate(cws): t.columns[ci].width = int(cw*914400)
     for ri in range(len(upcoming)+1): t.rows[ri].height = int(0.55*914400)
@@ -975,8 +990,9 @@ def _build_slide_transient_pace(prs, data):
     cd.add_series(f"Transient OTB {info['report_yr']}",   tuple(trn_otb))
     cd.add_series(f"Transient STLY {info['report_yr']-1}", tuple(trn_stly))
     chart = slide.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED,
-        Inches(0.25), Inches(0.65), Inches(6.5), Inches(3.7), cd).chart
+        Inches(0.25), Inches(0.65), Inches(6.5), Inches(3.4), cd).chart
     chart.has_legend = True; chart.legend.position = XL_LEGEND_POSITION.BOTTOM
+    chart.legend.include_in_layout = False
     chart.series[0].format.fill.solid(); chart.series[0].format.fill.fore_color.rgb = C['teal']
     chart.series[1].format.fill.solid(); chart.series[1].format.fill.fore_color.rgb = C['lightGray']
 
@@ -984,9 +1000,10 @@ def _build_slide_transient_pace(prs, data):
     cd2.add_series(f"OTB ADR {info['report_yr']}",   tuple(otb_adr))
     cd2.add_series(f"STLY ADR {info['report_yr']-1}", tuple(stly_adr))
     chart2 = slide.shapes.add_chart(XL_CHART_TYPE.LINE,
-        Inches(6.9), Inches(0.65), Inches(6.2), Inches(3.7), cd2).chart
+        Inches(6.9), Inches(0.65), Inches(6.2), Inches(3.4), cd2).chart
     chart2.has_title = True; chart2.chart_title.text_frame.text = "ADR: OTB vs STLY"
     chart2.has_legend = True; chart2.legend.position = XL_LEGEND_POSITION.BOTTOM
+    chart2.legend.include_in_layout = False
     chart2.series[0].format.line.color.rgb = C['teal']; chart2.series[0].format.line.width = 18000
     chart2.series[1].format.line.color.rgb = C['gold']; chart2.series[1].format.line.width = 18000
 
@@ -1056,10 +1073,10 @@ def _build_slide_pickup(prs, data):
 
     segs = data['pu_segs']
     tf = slide.shapes.add_table(len(segs)+1, 5,
-        Inches(0.25), Inches(5.0), Inches(13.0), Inches(2.4))
+        Inches(0.25), Inches(5.0), Inches(13.0), Inches(2.3))
     t = tf.table
     for ci, cw in enumerate([2.8,1.7,1.5,2.0,5.0]): t.columns[ci].width = int(cw*914400)
-    for ri in range(len(segs)+1): t.rows[ri].height = int(0.36*914400)
+    for ri in range(len(segs)+1): t.rows[ri].height = int(0.32*914400)
     for ci, h in enumerate(["Segment","PU RNs","% of Trans","PU Revenue","Note"]):
         _cell(t.cell(0,ci), h, bg=C['teal'], fg=C['white'], bold=True, size=9.5)
 
@@ -1097,8 +1114,9 @@ def _build_slide_monthly_occ(prs, data, mo_num):
         cd.add_series(f"OTB {info['report_yr']} OCC%",    tuple(otb_vals))
         cd.add_series(f"STLY {info['report_yr']-1} OCC%", tuple(stly_vals))
         chart = slide.shapes.add_chart(XL_CHART_TYPE.LINE,
-            Inches(0.25), Inches(0.65), Inches(13.0), Inches(3.8), cd).chart
+            Inches(0.25), Inches(0.65), Inches(13.0), Inches(3.5), cd).chart
         chart.has_legend = True; chart.legend.position = XL_LEGEND_POSITION.BOTTOM
+        chart.legend.include_in_layout = False
         chart.series[0].format.line.color.rgb = C['teal'];  chart.series[0].format.line.width = 18000
         chart.series[1].format.line.color.rgb = C['gold'];  chart.series[1].format.line.width = 18000
     else:
@@ -1133,15 +1151,32 @@ def _build_slide_segment_mix(prs, data, mo_num):
     _hdr(slide, f"MARKET SEGMENT MIX — {mo_label.upper()} {info['report_yr']}")
 
     if segs:
-        total_rev = sum(max(s['cy_rms']*s['cy_adr'],0) for s in segs)
+        # Filter to segments with positive revenue, take top 8 by revenue
+        valid_segs = [s for s in segs if s['cy_rms']*s['cy_adr'] > 0]
+        valid_segs.sort(key=lambda s: s['cy_rms']*s['cy_adr'], reverse=True)
+        pie_segs = valid_segs[:8]
+        total_rev = sum(s['cy_rms']*s['cy_adr'] for s in pie_segs)
         if total_rev > 0:
             cd = ChartData()
-            cd.categories = [s['name'] for s in segs]
-            cd.add_series("Revenue %", tuple(max(s['cy_rms']*s['cy_adr'],0)/total_rev for s in segs))
+            cd.categories = [s['name'] for s in pie_segs]
+            cd.add_series("Revenue %", tuple(s['cy_rms']*s['cy_adr']/total_rev for s in pie_segs))
             chart = slide.shapes.add_chart(XL_CHART_TYPE.PIE,
-                Inches(0.25), Inches(0.65), Inches(5.5), Inches(5.5), cd).chart
-            chart.has_title = True; chart.chart_title.text_frame.text = "Revenue Contribution %"
-            chart.has_legend = True; chart.legend.position = XL_LEGEND_POSITION.BOTTOM
+                Inches(0.25), Inches(0.85), Inches(5.5), Inches(4.0), cd).chart
+            chart.has_title = True; chart.chart_title.text_frame.text = "Revenue Contribution"
+            chart.has_legend = True
+            chart.legend.position = XL_LEGEND_POSITION.BOTTOM
+            chart.legend.include_in_layout = False
+            chart.legend.font.size = Pt(8)
+            # Add percentage data labels on slices
+            chart.plots[0].has_data_labels = True
+            dl = chart.plots[0].data_labels
+            dl.show_percentage = True
+            dl.show_value = False
+            dl.show_category_name = False
+            dl.show_series_name = False
+            dl.show_legend_key = False
+            dl.font.size = Pt(9)
+            dl.font.bold = True
 
         tf = slide.shapes.add_table(len(segs)+1, 7,
             Inches(5.9), Inches(0.65), Inches(7.2), Inches(4.3))
@@ -1196,8 +1231,9 @@ def _build_slide_full_year(prs, data):
     cd = ChartData(); cd.categories = months
     cd.add_series("Forecast", tuple(fcst_rms)); cd.add_series("Budget", tuple(bud_rms))
     chart = slide.shapes.add_chart(XL_CHART_TYPE.LINE,
-        Inches(0.25), Inches(0.65), Inches(7.4), Inches(4.8), cd).chart
+        Inches(0.25), Inches(0.65), Inches(7.4), Inches(4.5), cd).chart
     chart.has_legend = True; chart.legend.position = XL_LEGEND_POSITION.BOTTOM
+    chart.legend.include_in_layout = False
     chart.series[0].format.line.color.rgb = C['teal'];  chart.series[0].format.line.width = 20000
     chart.series[1].format.line.color.rgb = C['gold'];  chart.series[1].format.line.width = 20000
 

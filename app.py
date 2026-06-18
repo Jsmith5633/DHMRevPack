@@ -204,30 +204,48 @@ def _parse_total_rooms(xl):
 
 def _parse_pickup_notes(xl):
     """
-    Parse segment pickup data from the notes text in Pickup sheet row 45 (0-indexed).
+    Parse segment pickup data from any notes text in the Pickup sheet.
+    Scans ALL cells looking for text matching pickup-notes patterns, since
+    different hotels' exports may put notes in different rows.
     Returns list of dicts: {name, rms, rev, pct_trans, is_total, note}
     """
     try:
         df = pd.read_excel(xl, sheet_name='Pickup', header=None)
-        notes_text = str(df.iloc[45][1])
-        if notes_text in ('nan', '', 'None'):
+
+        # Find ALL cells with substantial pickup-notes text
+        notes_text = None
+        for ri in range(df.shape[0]):
+            for ci in range(df.shape[1]):
+                v = str(df.iloc[ri, ci]) if df.iloc[ri, ci] is not None else ''
+                if len(v) > 30 and ('RNs' in v or 'picked up' in v.lower()):
+                    notes_text = v
+                    break
+            if notes_text: break
+
+        if not notes_text:
             return None
 
-        # Find the first month's 7day pickup block (first occurrence)
+        # Use the first month's 7-day pickup block (most recent week)
         blocks = re.split(r'\n\n+', notes_text.strip())
         if not blocks:
             return None
 
-        first_block = blocks[0]
-        lines = [l.strip() for l in first_block.split('\n') if l.strip().startswith('*')]
+        # Find the first block that's the 7-day pickup (skip 14-day etc if present)
+        first_block = None
+        for blk in blocks:
+            if re.search(r'7\s*day\s*pick', blk, re.IGNORECASE):
+                first_block = blk; break
+        if first_block is None:
+            first_block = blocks[0]
 
-        segs = []
-        total_trn_rms = 0
-        total_trn_rev = 0
+        lines = [l.strip() for l in first_block.split('\n') if l.strip()]
+        # Filter to bullet/data lines (start with * or contain RNs)
+        data_lines = [l for l in lines if l.startswith('*') or 'RNs' in l]
 
         seg_map = {
             'transient': 'Transient (Total)',
             'retail':    'Retail / Rack',
+            'rack':      'Retail / Rack',
             'discount':  'Discount',
             'internet':  'Internet/OTA',
             'ota':       'Internet/OTA',
@@ -236,57 +254,65 @@ def _parse_pickup_notes(xl):
         }
 
         parsed = {}
-        for line in lines:
+        total_trn_rms = 0
+
+        for line in data_lines:
             line_low = line.lower()
             name = None
             for key, label in seg_map.items():
                 if key in line_low:
-                    name = label
-                    break
-            if name is None:
-                continue
+                    name = label; break
+            if name is None: continue
 
+            # Extract room count (e.g. "+587RNs" or "587 RNs")
             rms_match = re.search(r'([+-]?\d+)\s*RNs?', line, re.IGNORECASE)
-            rev_match = re.search(r'\$([0-9,]+(?:\.[0-9]+)?)[k]?\s*in\s*revenue', line, re.IGNORECASE)
-            adr_match = re.search(r'([+-]\$[\d.]+)\s*in\s*ADR', line, re.IGNORECASE)
+            if not rms_match: continue
+            rms = int(rms_match.group(1))
 
-            rms = int(rms_match.group(1)) if rms_match else 0
-            rev_str = rev_match.group(1).replace(',','') if rev_match else '0'
-            # Handle "$71k" shorthand
-            rev_k_match = re.search(r'\$(\d+)k\b', line, re.IGNORECASE)
+            # Extract revenue - handle $71k, $22140, $22,140.00 formats
+            rev = 0
+            rev_k_match = re.search(r'\$(\d+(?:\.\d+)?)\s*k\b', line, re.IGNORECASE)
             if rev_k_match:
-                rev = int(rev_k_match.group(1)) * 1000
+                rev = int(float(rev_k_match.group(1)) * 1000)
             else:
-                rev = int(float(rev_str)) if rev_str != '0' else 0
+                rev_match = re.search(r'\$([0-9,]+(?:\.\d+)?)', line)
+                if rev_match:
+                    try: rev = int(float(rev_match.group(1).replace(',','')))
+                    except: rev = 0
 
+            adr_match = re.search(r'([+-]\$[\d.]+)\s*in\s*ADR', line, re.IGNORECASE)
             adr_note = adr_match.group(1) if adr_match else ''
 
             if name == 'Transient (Total)':
                 total_trn_rms = rms
-                total_trn_rev = rev
-                parsed[name] = {'rms': rms, 'rev': rev, 'note': f"ADR {adr_note}" if adr_note else '', 'is_total': True}
+                parsed[name] = {'rms': rms, 'rev': rev,
+                                'note': f"ADR {adr_note}" if adr_note else '',
+                                'is_total': True}
             else:
-                parsed[name] = {'rms': rms, 'rev': rev, 'note': '', 'is_total': False}
+                # Don't overwrite if already parsed (use first occurrence)
+                if name not in parsed:
+                    parsed[name] = {'rms': rms, 'rev': rev, 'note': '', 'is_total': False}
 
-        if not parsed:
+        if not parsed or 'Transient (Total)' not in parsed:
             return None
 
-        # Build ordered list
         order = ['Transient (Total)', 'Retail / Rack', 'Discount', 'Internet/OTA', 'Packages', 'Group']
         result = []
         for seg_name in order:
             d = parsed.get(seg_name)
             if d:
-                pct = f"{d['rms']/total_trn_rms*100:.1f}%" if (total_trn_rms and not d['is_total']) else \
-                      ('100.0%' if d['is_total'] else '')
-                # Determine note for sub-segments
+                pct = ('100.0%' if d['is_total'] else
+                       f"{d['rms']/total_trn_rms*100:.1f}%" if total_trn_rms else '')
                 note = d['note']
                 if not note and not d['is_total']:
-                    if seg_name == 'Retail / Rack': note = 'Strong rate integrity'
-                    elif seg_name == 'Discount':     note = 'Monitor rate dilution'
-                    elif seg_name == 'Internet/OTA': note = 'Healthy contribution'
-                    elif seg_name == 'Packages':     note = 'Continue to promote'
-                    elif seg_name == 'Group':        note = 'Solid group contribution'
+                    default_notes = {
+                        'Retail / Rack':  'Strong rate integrity',
+                        'Discount':       'Monitor rate dilution',
+                        'Internet/OTA':   'Healthy contribution',
+                        'Packages':       'Continue to promote',
+                        'Group':          'Solid group contribution',
+                    }
+                    note = default_notes.get(seg_name, '')
                 result.append({
                     'name': seg_name, 'rms': d['rms'], 'rev': d['rev'],
                     'pct_trans': pct, 'is_total': d['is_total'], 'note': note,
@@ -294,7 +320,8 @@ def _parse_pickup_notes(xl):
             else:
                 result.append({
                     'name': seg_name, 'rms': 0, 'rev': 0,
-                    'pct_trans': '', 'is_total': seg_name == 'Transient (Total)', 'note': '—',
+                    'pct_trans': '', 'is_total': seg_name == 'Transient (Total)',
+                    'note': 'No notes data',
                 })
         return result
     except:
@@ -1051,7 +1078,7 @@ def _build_slide_pickup(prs, data):
         cd = ChartData(); cd.categories = pu_months
         cd.add_series("Room Nights Picked Up", tuple(pu_rms))
         chart = slide.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED,
-            Inches(0.25), Inches(0.65), Inches(6.5), Inches(3.8), cd).chart
+            Inches(0.25), Inches(0.65), Inches(6.5), Inches(3.4), cd).chart
         chart.has_title = True; chart.chart_title.text_frame.text = "Room Nights Picked Up by Month"
         chart.has_legend = False
         chart.series[0].format.fill.solid(); chart.series[0].format.fill.fore_color.rgb = C['teal']
@@ -1061,24 +1088,28 @@ def _build_slide_pickup(prs, data):
         cd2 = ChartData(); cd2.categories = pu_months
         cd2.add_series("Average ADR of Pickup", tuple(pu_adr))
         chart2 = slide.shapes.add_chart(XL_CHART_TYPE.COLUMN_CLUSTERED,
-            Inches(6.9), Inches(0.65), Inches(6.2), Inches(3.8), cd2).chart
+            Inches(6.9), Inches(0.65), Inches(6.2), Inches(3.4), cd2).chart
         chart2.has_title = True; chart2.chart_title.text_frame.text = "Average ADR of Pickup by Month"
         chart2.has_legend = False
         chart2.series[0].format.fill.solid(); chart2.series[0].format.fill.fore_color.rgb = C['gold']
         chart2.plots[0].has_data_labels = True; chart2.plots[0].data_labels.show_value = True
 
-    _rect(slide, 0.25, 4.62, 13.0, 0.33, C['navy'])
+    # Section divider header
+    _rect(slide, 0.25, 4.20, 13.0, 0.28, C['navy'])
     _txt(slide, "PICKUP DETAIL (7-Day) — Key Transient Segments",
-         0.35, 4.62, 13.0, 0.33, size=9.5, bold=True, color=C['white'], valign='middle')
+         0.35, 4.20, 13.0, 0.28, size=9, bold=True, color=C['white'], valign='middle')
 
     segs = data['pu_segs']
+    # 7 rows max × 0.32" = 2.24, fits comfortably in 2.7"
     tf = slide.shapes.add_table(len(segs)+1, 5,
-        Inches(0.25), Inches(5.0), Inches(13.0), Inches(2.3))
+        Inches(0.25), Inches(4.55), Inches(13.0), Inches(2.7))
     t = tf.table
     for ci, cw in enumerate([2.8,1.7,1.5,2.0,5.0]): t.columns[ci].width = int(cw*914400)
-    for ri in range(len(segs)+1): t.rows[ri].height = int(0.32*914400)
+    # Header row 0.32, data rows 0.34
+    t.rows[0].height = int(0.32*914400)
+    for ri in range(1, len(segs)+1): t.rows[ri].height = int(0.34*914400)
     for ci, h in enumerate(["Segment","PU RNs","% of Trans","PU Revenue","Note"]):
-        _cell(t.cell(0,ci), h, bg=C['teal'], fg=C['white'], bold=True, size=9.5)
+        _cell(t.cell(0,ci), h, bg=C['teal'], fg=C['white'], bold=True, size=9)
 
     for ri, seg in enumerate(segs):
         is_total = seg.get('is_total', False)
@@ -1087,12 +1118,12 @@ def _build_slide_pickup(prs, data):
         rms_v = seg['rms']
         rms_s = f"+{rms_v}" if rms_v>0 else (str(rms_v) if rms_v<0 else "—")
         rms_c = C['green'] if rms_v>0 else C['red'] if rms_v<0 else C['midGray']
-        _cell(t.cell(ri+1,0), seg['name'], bg=bg, fg=fg, bold=is_total, size=9.5)
-        _cell(t.cell(ri+1,1), rms_s,       bg=bg, fg=rms_c if not is_total else C['gold'], bold=is_total, size=9.5)
-        _cell(t.cell(ri+1,2), seg.get('pct_trans',''), bg=bg, fg=C['teal'] if not is_total else C['gold'], size=9.5)
+        _cell(t.cell(ri+1,0), seg['name'], bg=bg, fg=fg, bold=is_total, size=9)
+        _cell(t.cell(ri+1,1), rms_s,       bg=bg, fg=rms_c if not is_total else C['gold'], bold=is_total, size=9)
+        _cell(t.cell(ri+1,2), seg.get('pct_trans',''), bg=bg, fg=C['teal'] if not is_total else C['gold'], size=9)
         _cell(t.cell(ri+1,3), f"${seg['rev']:,}" if seg['rev'] else '—', bg=bg,
-              fg=C['teal'] if not is_total else C['gold'], bold=is_total, size=9.5)
-        _cell(t.cell(ri+1,4), seg.get('note',''), bg=bg, fg=C['slate'] if not is_total else C['midGray'], size=9, align='left')
+              fg=C['teal'] if not is_total else C['gold'], bold=is_total, size=9)
+        _cell(t.cell(ri+1,4), seg.get('note',''), bg=bg, fg=C['slate'] if not is_total else C['midGray'], size=8.5, align='left')
 
 # ─── Slides 7/9/11: Monthly Daily Outlook ────────────────────────────────────
 def _build_slide_monthly_occ(prs, data, mo_num):
